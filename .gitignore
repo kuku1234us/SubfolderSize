@@ -1,0 +1,85 @@
+ # Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+# If using PyInstaller (commonly for building Windows executables), ignore spec files and build folders.
+*.spec
+build/
+dist/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage related files
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# Translations
+*.mo
+
+# Django stuff (if applicable)
+local_settings.py
+
+# Flask stuff (if applicable)
+instance/
+.webassets-cache/
+
+# IDE / Editor directories and files
+.idea/
+.vscode/
+
+# Virtual environment directories
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Windows specific
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Windows executables and related files
+*.exe
+*.dll
+*.pdb
+
+# Log files
+*.log
