@@ -16,9 +16,10 @@ from PyQt6.QtWidgets import (
     QStyle,
     QAbstractItemView,
     QLabel,
+    QHeaderView,
 )
 from PyQt6.QtCore import Qt, QSize, QTimer, QThread, pyqtSignal
-from PyQt6.QtGui import QPalette, QColor, QPainter
+from PyQt6.QtGui import QPalette, QColor, QPainter, QIcon
 
 def set_dark_theme(app: QApplication):
     """Sets a dark theme for the application by configuring the QPalette."""
@@ -203,6 +204,19 @@ class QProgressIndicator(QLabel):
         painter.drawText(-text_rect.center().x(), -text_rect.center().y(), text)
         painter.restore()
 
+class MyTreeWidgetItem(QTreeWidgetItem):
+    def __lt__(self, other):
+        # Get current sort column from the header
+        column = self.treeWidget().header().sortIndicatorSection()
+        if column == 1:  # "Size" column: compare numeric file sizes stored in UserRole
+            self_value = self.data(1, Qt.ItemDataRole.UserRole)
+            other_value = other.data(1, Qt.ItemDataRole.UserRole)
+            try:
+                return float(self_value) < float(other_value)
+            except (ValueError, TypeError):
+                pass
+        return super().__lt__(other)
+
 class DirectoryScanner(QThread):
     """Worker thread for scanning directory contents"""
     finished = pyqtSignal()  # Signal when scanning is complete
@@ -298,6 +312,13 @@ class PaneWidget(QWidget):
         self.folderButton.clicked.connect(self.select_folder)
         self.topRow.addWidget(self.folderButton)
 
+        # Parent folder navigation button
+        self.parentButton = QPushButton()
+        parent_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogToParent)
+        self.parentButton.setIcon(parent_icon)
+        self.parentButton.clicked.connect(self.go_to_parent_folder)
+        self.topRow.addWidget(self.parentButton)
+
         # Text field displaying current folder path
         self.folderLineEdit = QLineEdit()
         self.topRow.addWidget(self.folderLineEdit)
@@ -323,6 +344,21 @@ class PaneWidget(QWidget):
         self.treeWidget.setColumnCount(2)
         self.treeWidget.setHeaderLabels(["Name", "Size"])
         self.treeWidget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.treeWidget.setSortingEnabled(True)  # Enable sorting
+        header = self.treeWidget.header()
+        # Don't automatically stretch the last column.
+        header.setStretchLastSection(False)
+        # Set the "Name" column (index 0) to Stretch mode so it always fills the remaining space.
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        # Set the "Size" column (index 1) to Interactive so the user can manually resize it.
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        header.resizeSection(1, 80)
+        # Set initial sort indicator
+        header.setSortIndicator(0, Qt.SortOrder.AscendingOrder)
+        # Connect header clicks to our sorting handler
+        header.sectionClicked.connect(self.handle_header_clicked)
+        # Enable double-click navigation in the tree view
+        self.treeWidget.itemDoubleClicked.connect(self.on_item_double_clicked)
         self.layout.addWidget(self.treeWidget)
 
         # --- Bottom Row: Move and Tree Buttons ---
@@ -363,7 +399,10 @@ class PaneWidget(QWidget):
         self.scanner = DirectoryScanner(folder)
         
         def on_item_found(name, size, is_dir):
-            item = QTreeWidgetItem([name, self.calculate_size(float(size))])
+            numeric_size = float(size)
+            item = MyTreeWidgetItem([name, self.calculate_size(numeric_size)])
+            # Store the raw size as numeric value in UserRole for sorting
+            item.setData(1, Qt.ItemDataRole.UserRole, numeric_size)
             if is_dir:
                 folder_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
                 item.setIcon(0, folder_icon)
@@ -484,28 +523,49 @@ class PaneWidget(QWidget):
         self.move_worker.finished.connect(on_finished)
         self.move_worker.start()
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        # Center the spinner on top of the treeWidget by calculating its geometry relative to the PaneWidget (self)
-        tree_rect = self.treeWidget.geometry()
-        spinner_x = tree_rect.x() + (tree_rect.width() - self.loading_indicator.width()) // 2
-        spinner_y = tree_rect.y() + (tree_rect.height() - self.loading_indicator.height()) // 2
-        self.loading_indicator.move(spinner_x, spinner_y)
+    def handle_header_clicked(self, index):
+        """
+        Sorts the tree when a header is clicked.
+        When index 0 ("Name") is clicked, sort ascending by name.
+        When index 1 ("Size") is clicked, sort descending by filesize.
+        """
+        if index == 0:
+            self.treeWidget.sortItems(0, Qt.SortOrder.AscendingOrder)
+        elif index == 1:
+            self.treeWidget.sortItems(1, Qt.SortOrder.DescendingOrder)
 
     def copy_folder_tree(self):
         """
-        Generates an ASCII tree of the current folder (recursively including all subfolders and files)
-        and copies the result into the system clipboard.
-        Displays a success message once complete.
+        Generates an ASCII tree only for the selected items in the view.
+        For a selected folder, recursively traverses its subfolders/files.
+        Copies the resulting tree to the system clipboard and displays a success message.
         """
         folder = self.folderLineEdit.text().strip()
         if not folder or not os.path.isdir(folder):
             QMessageBox.warning(self, "Error", "Please select a valid folder first.")
             return
 
-        tree_lines = self.build_ascii_tree(folder)
-        tree_str = "\n".join(tree_lines)
+        selected_items = self.treeWidget.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "Error", "No items selected.")
+            return
 
+        tree_lines = []
+        for idx, item in enumerate(selected_items):
+            name = item.text(0)
+            full_path = os.path.join(folder, name)
+            # Use a connector for the top-level selected item
+            connector = "└─ " if idx == len(selected_items) - 1 else "├─ "
+            tree_lines.append(connector + name)
+            if os.path.isdir(full_path):
+                # Determine extra prefix based on connector for the top-level item.
+                # Use 3 characters: "   " for last items and "│  " for non-last.
+                extra_prefix = "   " if connector.startswith("└") else "│  "
+                # Pass the extra prefix into build_ascii_tree so that the branches appear properly.
+                sub_lines = self.build_ascii_tree(full_path, prefix=extra_prefix)
+                tree_lines.extend(sub_lines)
+
+        tree_str = "\n".join(tree_lines)
         clipboard = QApplication.clipboard()
         clipboard.setText(tree_str)
         QMessageBox.information(self, "Copied", "Folder tree copied to clipboard!")
@@ -526,9 +586,40 @@ class PaneWidget(QWidget):
             connector = "└─ " if idx == len(entries) - 1 else "├─ "
             lines.append(prefix + connector + entry)
             if os.path.isdir(full_path):
-                extension = "    " if idx == len(entries) - 1 else "│   "
-                lines.extend(self.build_ascii_tree(full_path, prefix + extension))
+                # Determine extra prefix based on connector for the top-level item.
+                # Use 3 characters: "   " for last items and "│  " for non-last.
+                extra_prefix = "   " if connector.startswith("└") else "│  "
+                # Pass the extra prefix into build_ascii_tree so that the branches appear properly.
+                sub_lines = self.build_ascii_tree(full_path, prefix + extra_prefix)
+                lines.extend(sub_lines)
         return lines
+
+    def go_to_parent_folder(self):
+        """
+        Navigates to the parent folder of the current folder.
+        """
+        current = self.folderLineEdit.text().strip()
+        if not current:
+            return
+        parent_folder = os.path.dirname(current)
+        if parent_folder and os.path.isdir(parent_folder):
+            self.folderLineEdit.setText(parent_folder)
+            self.load_directory(parent_folder)
+        else:
+            QMessageBox.information(self, "Info", "No parent folder available.")
+
+    def on_item_double_clicked(self, item, column):
+        """
+        When an item is double-clicked, if it represents a folder,
+        navigate into that folder.
+        """
+        folder = self.folderLineEdit.text().strip()
+        if not folder or not os.path.isdir(folder):
+            return
+        subfolder = os.path.join(folder, item.text(0))
+        if os.path.isdir(subfolder):
+            self.folderLineEdit.setText(subfolder)
+            self.load_directory(subfolder)
 
 class MainWindow(QMainWindow):
     """
@@ -537,6 +628,17 @@ class MainWindow(QMainWindow):
     """
     def __init__(self):
         super().__init__()
+        import sys, os
+        if getattr(sys, "frozen", False):
+            # The application is running in frozen mode, so the bundled files
+            # are in a temporary folder accessible via sys._MEIPASS
+            base_path = sys._MEIPASS
+        else:
+            # Running as a script
+            base_path = os.path.abspath(".")
+        icon_path = os.path.join(base_path, "assets", "folder.ico")
+        self.setWindowIcon(QIcon(icon_path))
+        
         self.setStyleSheet(STYLE_SHEET)
         self.setWindowTitle("SubfolderSize GUI")
         self.resize(800, 600)
