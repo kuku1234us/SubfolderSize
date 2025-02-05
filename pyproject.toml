@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "subfoldersize"
+version = "0.1.0"
+description = "Python app to display size stats of all subfolders of a selected folder"
+authors = ["kothreat <kuku1234us@yahoo.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.14"
+pyqt6 = "^6.8.0"
+
+[tool.poetry.group.dev.dependencies]
+pyinstaller = "^6.11.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
